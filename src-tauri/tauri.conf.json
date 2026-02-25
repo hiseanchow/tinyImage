@@ -1,0 +1,74 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TinyImage",
+  "version": "0.1.0",
+  "identifier": "com.tinyimage.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "TinyImage",
+        "width": 760,
+        "height": 560,
+        "minWidth": 600,
+        "minHeight": 440,
+        "resizable": true,
+        "center": true,
+        "decorations": true,
+        "visible": false,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 16, "y": 22 },
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$HOME/**", "/Volumes/**", "/tmp/**"]
+      }
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "mobile": [],
+      "desktop": [
+        { "schemes": ["tinyimage"] }
+      ]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "entitlements": null,
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null,
+      "infoPlist": "Info.plist"
+    },
+    "fileAssociations": [
+      {
+        "ext": ["png", "jpg", "jpeg", "webp"],
+        "name": "Image",
+        "description": "Image file",
+        "role": "Viewer"
+      }
+    ]
+  }
+}

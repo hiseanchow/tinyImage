@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "TinyImage 默认权限",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-start-dragging",
+    "core:app:default",
+    "core:path:default",
+    "core:image:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:default",
+    "fs:read-all",
+    "fs:write-all",
+    "notification:default",
+    "notification:allow-notify",
+    "notification:allow-request-permission",
+    "shell:default",
+    "shell:allow-open",
+    "deep-link:default"
+  ]
+}

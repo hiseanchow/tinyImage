@@ -1,0 +1,44 @@
+[package]
+name = "tiny-image"
+version = "0.1.0"
+description = "TinyImage - 跨平台图片压缩工具"
+authors = []
+edition = "2021"
+
+[lib]
+name = "tiny_image_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+cc = "1"
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
+tauri-plugin-notification = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-deep-link = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+reqwest = { version = "0.12", features = ["blocking", "multipart", "json"] }
+tokio = { version = "1", features = ["full"] }
+
+dirs = "5"
+anyhow = "1"
+base64 = "0.22"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.52"
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
