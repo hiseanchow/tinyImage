@@ -10,6 +10,8 @@ on:
 jobs:
   release:
     # 定义跨平台打包矩阵：同时启动一台 Mac 和一台 Windows 服务器
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
