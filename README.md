@@ -25,13 +25,13 @@
 
 ```bash
 # 安装依赖
-npm install
+pnpm install
 
 # 开发模式（同时启动 Vite 和 Tauri）
-npm run tauri dev
+pnpm run tauri dev
 
 # 构建发布包
-npm run tauri build
+pnpm run tauri build
 ```
 
 ## 获取 API Key
