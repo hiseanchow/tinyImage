@@ -302,37 +302,8 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("构建 TinyImage 时出错")
-        .run(|app, event| {
-            if let tauri::RunEvent::Opened { urls } = event {
-                // macOS Open With & Drag-to-Icon 触发此事件
-                let mut files = Vec::new();
-                for url in urls {
-                    // url 是 file:// 开头的本地路径
-                    if url.scheme() == "file" {
-                        if let Ok(path) = url.to_file_path() {
-                            files.push(path.to_string_lossy().to_string());
-                        }
-                    }
-                }
-                let valid_files = filter_image_args(files);
-                if !valid_files.is_empty() {
-                    if !FRONTEND_READY.load(std::sync::atomic::Ordering::SeqCst) {
-                        if let Ok(mut guard) = STARTUP_FILES.lock() {
-                            for f in &valid_files {
-                                guard.push((f.clone(), false));
-                            }
-                        }
-                    }
-                    // 发布仅添加文件的事件
-                    let _ = app.emit("add-files", &valid_files);
-                    
-                    // 确保窗口显示并且激活
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
-            }
+        .run(|_app, _event| {
+            // Tauri 2 已移除 RunEvent::Opened，macOS Open With 功能
+            // 现在通过 deep-link 插件的 on_open_url 处理
         });
 }
