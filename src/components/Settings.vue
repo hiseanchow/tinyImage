@@ -210,9 +210,7 @@
         <div class="toggle-row">
           <div>
             <span class="toggle-label">启用右键菜单 "用TinyImage压缩"</span>
-            <p class="hint">
-              启用后，在访达中右键图片，选择<strong>服务</strong> -> <strong>用TinyImage压缩</strong>，即可压缩图片。
-            </p>
+            <p class="hint" v-html="contextMenuHint"></p>
           </div>
           <button
             class="toggle-switch"
@@ -240,9 +238,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { ref, reactive, watch, computed } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
 import { invoke } from '@tauri-apps/api/core'
+import { platform } from '@tauri-apps/plugin-os'
 import { useAppStore } from '@/stores/app'
 import { useTheme } from '@/composables/useTheme'
 import type { AppSettings } from '@/types'
@@ -252,6 +251,7 @@ const store = useAppStore()
 const { setTheme } = useTheme()
 const showKey = ref(false)
 const saving = ref(false)
+const currentPlatform = platform()
 
 const local = reactive<AppSettings>({ ...store.settings })
 
@@ -259,6 +259,16 @@ watch(() => store.settings, (s) => Object.assign(local, s), { deep: true })
 
 // 主题选项变化时立即预览，无需等保存
 watch(() => local.theme, (t) => setTheme(t))
+
+// 根据平台显示不同的右键菜单提示
+const contextMenuHint = computed(() => {
+  if (currentPlatform === 'macos') {
+    return '启用后，在 Finder 中右键图片，选择<strong>服务</strong> → <strong>用TinyImage压缩</strong>。'
+  } else if (currentPlatform === 'windows') {
+    return '启用后，在资源管理器中右键图片，直接选择<strong>用TinyImage压缩</strong>。'
+  }
+  return '在文件管理器中右键图片即可使用。'
+})
 
 async function pickDirectory() {
   const dir = await open({ directory: true, multiple: false })

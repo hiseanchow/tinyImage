@@ -19,7 +19,7 @@ static IS_BACKGROUND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 
 #[tauri::command]
 fn init_window(window: tauri::Window) {
-    if !IS_BACKGROUND.load(std::sync::atomic::Ordering::SeqCst) {
+    if !IS_BACKGROUND.load(Ordering::SeqCst) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
