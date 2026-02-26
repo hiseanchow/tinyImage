@@ -51,22 +51,19 @@ static BOOL isContextMenuEnabled(void) {
   if (paths.count == 0)
     return;
 
-  // 直接通过 NSWorkspace 启动 app 并传递 --compress 参数：
-  // 不依赖 URL scheme 路由，避免未签名 app 无法通过 tinyimage:// 被启动的问题。
-  // 若 app 已在运行，单实例插件会将参数转发给已有进程后自动退出。
-  NSURL *appURL = [[NSBundle mainBundle] bundleURL];
+  // 用 NSTask 直接执行可执行文件（绕过 Launch Services），保证无论 app
+  // 是否已在运行都能创建新进程并传递 --compress 参数：
+  // - app 未运行：新进程成为首个实例，直接进入后台压缩模式后退出
+  // - app 已运行：单实例插件将参数转发给已有进程后新进程退出
+  NSString *exePath = [[NSBundle mainBundle] executablePath];
   NSMutableArray<NSString *> *args =
       [NSMutableArray arrayWithObject:@"--compress"];
   [args addObjectsFromArray:paths];
 
-  NSWorkspaceOpenConfiguration *config =
-      [NSWorkspaceOpenConfiguration configuration];
-  config.arguments = args;
-  config.activates = NO; // 后台启动，不抢占前台焦点
-
-  [[NSWorkspace sharedWorkspace] openApplicationAtURL:appURL
-                                        configuration:config
-                                    completionHandler:nil];
+  NSTask *task = [[NSTask alloc] init];
+  task.executableURL = [NSURL fileURLWithPath:exePath];
+  task.arguments = args;
+  [task launchAndReturnError:nil];
 }
 
 @end

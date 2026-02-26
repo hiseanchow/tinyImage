@@ -286,7 +286,17 @@ pub fn run() {
             let (is_compress, files) = parse_args(argv.into_iter().skip(1).collect());
 
             if is_compress && !files.is_empty() {
-                // 右键"用TinyImage压缩"：在当前进程后台压缩，不影响 UI
+                // 右键"用TinyImage压缩"：在当前进程后台压缩，不影响 UI。
+                // 若当前进程从未向用户展示过窗口（由 NSServices 静默启动的中间进程），
+                // 则压缩完成后自动退出，避免留下隐藏的僵尸进程。
+                let was_launched_silently = !FRONTEND_READY.load(Ordering::SeqCst)
+                    && !app
+                        .get_webview_window("main")
+                        .and_then(|w| w.is_visible().ok())
+                        .unwrap_or(false);
+                if was_launched_silently {
+                    IS_BACKGROUND.store(true, Ordering::SeqCst);
+                }
                 spawn_bg_compress(app.clone(), files);
             } else if !files.is_empty() {
                 // 打开方式：仅添加文件到列表，不自动压缩
@@ -400,8 +410,12 @@ pub fn run() {
                         continue;
                     }
 
-                    if is_bg && was_hidden {
-                        IS_BACKGROUND.store(true, Ordering::SeqCst);
+                    if is_bg {
+                        // 服务菜单请求：始终后台压缩，不弹出窗口。
+                        // 若 app 是因本次请求才启动的（窗口从未显示），则压缩后退出。
+                        if was_hidden {
+                            IS_BACKGROUND.store(true, Ordering::SeqCst);
+                        }
                         spawn_bg_compress(handle.clone(), files);
                         continue;
                     }
