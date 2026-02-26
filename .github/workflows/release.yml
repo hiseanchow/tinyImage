@@ -1,15 +1,13 @@
 name: Release Tauri App
 
-# 触发条件：当推送以 v 开头的标签（如 v1.0.0）时，自动开始打包
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch: # 也支持在 GitHub 网页上手动点击运行
+  workflow_dispatch:
 
 jobs:
   release:
-    # 定义跨平台打包矩阵：同时启动一台 Mac 和一台 Windows 服务器
     permissions:
       contents: write
     strategy:
@@ -44,8 +42,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }} # 使用你推送的标签名作为版本号
-          releaseName: 'TinyImage v${{ github.ref_name }}'
+          tagName: ${{ github.ref_name }}
+          releaseName: 'TinyImage ${{ github.ref_name }}'
           releaseBody: '🚀 自动打包发布的最新版本，请在下方 Assets 下载对应的安装包。'
-          releaseDraft: true # 开打包完成后先存为草稿，方便你检查后再公发布
+          releaseDraft: true
           prerelease: false
