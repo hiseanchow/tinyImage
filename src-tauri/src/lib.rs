@@ -357,6 +357,34 @@ pub fn run() {
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
+                    // ── macOS "打开方式" 传来的 file:// URL ──────────
+                    // 直接提取本地路径，仅添加到列表，不自动压缩
+                    if url.scheme() == "file" {
+                        if let Ok(path) = url.to_file_path() {
+                            let path_str = path.to_string_lossy().to_string();
+                            let valid = filter_image_args(vec![path_str]);
+                            if valid.is_empty() {
+                                continue;
+                            }
+                            if !FRONTEND_READY.load(Ordering::SeqCst) {
+                                if let Ok(mut guard) = STARTUP_FILES.lock() {
+                                    for f in &valid {
+                                        guard.push((f.clone(), false));
+                                    }
+                                }
+                            } else {
+                                handle.emit("add-files", &valid).ok();
+                            }
+                            if let Some(window) = handle.get_webview_window("main") {
+                                let _ = window.unminimize();
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        continue;
+                    }
+
+                    // ── tinyimage:// 自定义协议（右键压缩 / NSServices）
                     let u = url.as_str();
                     let is_bg = u.contains("background=1");
 
@@ -378,7 +406,7 @@ pub fn run() {
                         continue;
                     }
 
-                    // 前台模式：显示 UI，把文件发给前端
+                    // 前台模式：显示 UI，把文件发给前端并自动压缩
                     if !FRONTEND_READY.load(Ordering::SeqCst) {
                         if let Ok(mut guard) = STARTUP_FILES.lock() {
                             for f in &files {
