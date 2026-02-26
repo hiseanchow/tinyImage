@@ -47,6 +47,19 @@ pnpm run tauri build
 - **macOS**：在 Finder 右键菜单的"服务"子菜单中出现"用 TinyImage 压缩"
 - **Windows**：在资源管理器右键菜单中直接出现"用 TinyImage 压缩"
 
+## 注意事项
+
+由于APP未签名，在macOS会提示“TinyImage已损坏”
+
+解决方式：
+
+1. 把 App 拖进“应用程序 (Applications)”文件夹
+2. 打开终端输入以下命令，并回车执行
+
+  ```bash
+  sudo xattr -rd com.apple.quarantine /Applications/TinyImage.app
+  ```
+
 ## License
 
 [MIT](./LICENSE)
