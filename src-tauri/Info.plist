@@ -2,6 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- 文件访问权限描述（TCC 要求 app 有代码签名才生效） -->
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>TinyImage 需要访问桌面文件夹以压缩图片</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>TinyImage 需要访问文稿文件夹以压缩图片</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>TinyImage 需要访问下载文件夹以压缩图片</string>
     <key>NSServices</key>
     <array>
         <dict>

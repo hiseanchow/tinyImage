@@ -55,11 +55,11 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "entitlements": null,
+      "entitlements": "entitlements.plist",
       "exceptionDomain": "",
       "frameworks": [],
       "providerShortName": null,
-      "signingIdentity": null,
+      "signingIdentity": "-",
       "infoPlist": "Info.plist"
     },
     "fileAssociations": [

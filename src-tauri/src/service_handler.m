@@ -51,26 +51,22 @@ static BOOL isContextMenuEnabled(void) {
   if (paths.count == 0)
     return;
 
-  // 编码路径为 URL 参数值：需要对 & ? = # 等字符编码，但保留 /
-  NSMutableCharacterSet *allowed =
-      [[NSCharacterSet URLQueryAllowedCharacterSet] mutableCopy];
-  [allowed removeCharactersInString:@"&=?#+%"];
+  // 直接通过 NSWorkspace 启动 app 并传递 --compress 参数：
+  // 不依赖 URL scheme 路由，避免未签名 app 无法通过 tinyimage:// 被启动的问题。
+  // 若 app 已在运行，单实例插件会将参数转发给已有进程后自动退出。
+  NSURL *appURL = [[NSBundle mainBundle] bundleURL];
+  NSMutableArray<NSString *> *args =
+      [NSMutableArray arrayWithObject:@"--compress"];
+  [args addObjectsFromArray:paths];
 
-  NSMutableString *urlStr = [@"tinyimage://compress?background=1" mutableCopy];
-  BOOL first = NO;
-  for (NSString *path in paths) {
-    NSString *encoded =
-        [path stringByAddingPercentEncodingWithAllowedCharacters:allowed];
-    if (!encoded)
-      continue;
-    [urlStr appendFormat:@"%@file=%@", first ? @"?" : @"&", encoded];
-    first = NO;
-  }
+  NSWorkspaceOpenConfiguration *config =
+      [NSWorkspaceOpenConfiguration configuration];
+  config.arguments = args;
+  config.activates = NO; // 后台启动，不抢占前台焦点
 
-  NSURL *url = [NSURL URLWithString:urlStr];
-  if (url) {
-    [[NSWorkspace sharedWorkspace] openURL:url];
-  }
+  [[NSWorkspace sharedWorkspace] openApplicationAtURL:appURL
+                                        configuration:config
+                                    completionHandler:nil];
 }
 
 @end
