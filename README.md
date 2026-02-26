@@ -2,12 +2,15 @@
 
 基于 TinyPNG API 的跨平台图片压缩桌面应用，支持 macOS 和 Windows。
 
+![demonstration](./screenshots/demonstration.gif)
+
 ## 功能
 
 - 拖拽图片或点击选择文件，批量压缩
 - 支持 PNG、JPG、JPEG、WebP 格式
 - 右键菜单集成（文件管理器中直接压缩）
-- 压缩进度实时显示，节省空间一目了然
+- 压缩进度实时显示
+- 支持原路径输出 / 原图覆盖 / 指定目录输出
 
 **设置项：**
 | 选项 | 说明 |
@@ -43,3 +46,7 @@ pnpm run tauri build
 在设置页面启用"右键菜单集成"后：
 - **macOS**：在 Finder 右键菜单的"服务"子菜单中出现"用 TinyImage 压缩"
 - **Windows**：在资源管理器右键菜单中直接出现"用 TinyImage 压缩"
+
+## License
+
+[MIT](./LICENSE)
