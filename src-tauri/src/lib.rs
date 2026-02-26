@@ -34,8 +34,9 @@ fn spawn_bg_compress(app: AppHandle, files: Vec<String>) {
         let f = file.clone();
         let s = settings.clone();
         tauri::async_runtime::spawn(async move {
+            let handle2 = handle.clone();
             let res = tokio::task::spawn_blocking(move || {
-                compress::compress_image(&f, &s)
+                compress::compress_image(&f, &s, &handle2)
             })
             .await
             .unwrap_or_else(|_| Err(anyhow::anyhow!("panic")));
@@ -177,11 +178,12 @@ fn percent_decode(s: &str) -> String {
 
 #[tauri::command]
 async fn compress_image(
+    app: AppHandle,
     file_path: String,
     settings: settings::AppSettings,
 ) -> Result<compress::CompressResult, String> {
     tokio::task::spawn_blocking(move || {
-        compress::compress_image(&file_path, &settings)
+        compress::compress_image(&file_path, &settings, &app)
     })
     .await
     .map_err(|e| e.to_string())?

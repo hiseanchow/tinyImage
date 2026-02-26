@@ -1,13 +1,14 @@
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use tauri::{AppHandle, Emitter};
 
 use crate::settings::{AppSettings, OutputMode};
 
 // 全局共享 Client：避免每次压缩都重建 TLS 上下文和连接池
-// 在 Windows 上 TLS 初始化开销尤为明显，共享后可复用 keep-alive 连接
 static HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 
 fn client() -> &'static reqwest::blocking::Client {
@@ -20,6 +21,8 @@ fn client() -> &'static reqwest::blocking::Client {
             .expect("构建 HTTP Client 失败")
     })
 }
+
+// ── 数据结构 ───────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompressResult {
@@ -52,7 +55,53 @@ struct TinyPngError {
     message: String,
 }
 
-pub fn compress_image(file_path: &str, settings: &AppSettings) -> Result<CompressResult> {
+// ── 进度事件 ───────────────────────────────────────────────────
+
+#[derive(Serialize, Clone)]
+struct ProgressEvent<'a> {
+    path: &'a str,
+    percent: u8,
+    phase: &'a str,
+}
+
+fn emit_progress(app: &AppHandle, path: &str, percent: u8, phase: &str) {
+    app.emit("compress-progress", &ProgressEvent { path, percent, phase }).ok();
+}
+
+// ── 上传进度 Reader ────────────────────────────────────────────
+// 包装内存数据，在 reqwest 读取 body 时实时发送上传百分比
+
+struct UploadProgress {
+    cursor: std::io::Cursor<Vec<u8>>,
+    total: u64,
+    app: AppHandle,
+    path: String,
+    last_pct: u8,
+}
+
+impl Read for UploadProgress {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.cursor.read(buf)?;
+        if self.total > 0 {
+            let pos = self.cursor.position();
+            // 上传占总进度的 0-40%
+            let pct = (pos as f64 / self.total as f64 * 40.0) as u8;
+            if pct > self.last_pct {
+                self.last_pct = pct;
+                emit_progress(&self.app, &self.path, pct, "uploading");
+            }
+        }
+        Ok(n)
+    }
+}
+
+// ── 压缩入口 ───────────────────────────────────────────────────
+
+pub fn compress_image(
+    file_path: &str,
+    settings: &AppSettings,
+    app: &AppHandle,
+) -> Result<CompressResult> {
     if settings.api_key.is_empty() {
         bail!("API Key 未配置，请在设置中填写 TinyPNG API Key");
     }
@@ -65,16 +114,28 @@ pub fn compress_image(file_path: &str, settings: &AppSettings) -> Result<Compres
     let input_data = fs::read(path)?;
     let input_size = input_data.len() as u64;
 
-    // 上传到 TinyPNG API
+    // ── 上传阶段 (0-40%) ────────────────────────────────────────
+    emit_progress(app, file_path, 0, "uploading");
+
+    let body = reqwest::blocking::Body::sized(
+        UploadProgress {
+            total: input_size,
+            cursor: std::io::Cursor::new(input_data),
+            app: app.clone(),
+            path: file_path.to_string(),
+            last_pct: 0,
+        },
+        input_size,
+    );
+
     let upload_resp = client()
         .post("https://api.tinify.com/shrink")
         .basic_auth("api", Some(&settings.api_key))
         .header("Content-Type", "application/octet-stream")
-        .body(input_data)
+        .body(body)
         .send()?;
 
     let status = upload_resp.status();
-
     if !status.is_success() {
         let err: TinyPngError = upload_resp
             .json()
@@ -82,10 +143,14 @@ pub fn compress_image(file_path: &str, settings: &AppSettings) -> Result<Compres
         bail!("TinyPNG 上传失败: {}", err.message);
     }
 
+    // ── 处理阶段 (40-50%)：等待 TinyPNG 服务端压缩 ─────────────
+    emit_progress(app, file_path, 40, "processing");
     let tinify_resp: TinyPngResponse = upload_resp.json()?;
 
-    // 下载压缩后的文件，并检查 HTTP 状态
-    let download_resp = client()
+    // ── 下载阶段 (50-99%)：流式下载，实时更新百分比 ─────────────
+    emit_progress(app, file_path, 50, "downloading");
+
+    let mut download_resp = client()
         .get(&tinify_resp.output.url)
         .basic_auth("api", Some(&settings.api_key))
         .send()?;
@@ -94,9 +159,31 @@ pub fn compress_image(file_path: &str, settings: &AppSettings) -> Result<Compres
         bail!("下载压缩文件失败: HTTP {}", download_resp.status());
     }
 
-    let compressed_data = download_resp.bytes()?;
+    let total_bytes = tinify_resp.output.size;
+    let mut compressed_data = Vec::with_capacity(total_bytes as usize);
+    let mut downloaded = 0u64;
+    let mut last_pct = 50u8;
+    let mut buf = [0u8; 16_384];
 
-    // 验证数据合理性：防止写入空文件或错误响应体（通常只有几十字节）
+    loop {
+        let n = download_resp
+            .read(&mut buf)
+            .map_err(|e| anyhow!("下载读取失败: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        compressed_data.extend_from_slice(&buf[..n]);
+        downloaded += n as u64;
+        if total_bytes > 0 {
+            // 下载占总进度的 50-99%，留 1% 给写文件
+            let pct = (50.0 + downloaded as f64 / total_bytes as f64 * 49.0) as u8;
+            if pct > last_pct {
+                last_pct = pct;
+                emit_progress(app, file_path, pct, "downloading");
+            }
+        }
+    }
+
     if compressed_data.len() < 64 {
         bail!(
             "下载的压缩文件异常（{}字节），请重试",
@@ -105,20 +192,16 @@ pub fn compress_image(file_path: &str, settings: &AppSettings) -> Result<Compres
     }
 
     let output_size = compressed_data.len() as u64;
-
-    // 确定输出路径
     let output_path = resolve_output_path(path, settings)?;
 
-    // 确保父目录存在
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // 先写临时文件，成功后再原子替换，避免 overwrite 模式下中途失败损坏原图
+    // 先写临时文件再原子替换，避免 overwrite 模式下失败时损坏原图
     let tmp_path = output_path.with_extension("__tinytmp__");
-    fs::write(&tmp_path, &compressed_data).map_err(|e| {
-        anyhow!("写入临时文件失败: {}", e)
-    })?;
+    fs::write(&tmp_path, &compressed_data)
+        .map_err(|e| anyhow!("写入临时文件失败: {}", e))?;
     fs::rename(&tmp_path, &output_path).map_err(|e| {
         let _ = fs::remove_file(&tmp_path);
         anyhow!("移动文件失败: {}", e)

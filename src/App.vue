@@ -116,6 +116,16 @@ onMounted(async () => {
     store.addFiles(event.payload)
     store.compressAll().catch(console.error)
   })
+
+  // 监听 Rust 发来的实时压缩进度，更新对应文件的 progress 和 phase
+  await listen<{ path: string; percent: number; phase: string }>('compress-progress', (event) => {
+    const { path, percent, phase } = event.payload
+    const file = store.files.find(f => f.path === path)
+    if (file && file.status === 'compressing') {
+      file.progress = percent
+      file.phase = phase as any
+    }
+  })
 })
 
 // 设置面板保存主题时同步到 composable

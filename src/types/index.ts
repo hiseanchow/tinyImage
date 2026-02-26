@@ -12,6 +12,7 @@ export interface AppSettings {
 }
 
 export type FileStatus = 'pending' | 'compressing' | 'done' | 'error'
+export type CompressPhase = 'uploading' | 'processing' | 'downloading'
 
 export interface FileItem {
   id: string
@@ -22,6 +23,8 @@ export interface FileItem {
   status: FileStatus
   errorMessage?: string
   outputPath?: string
+  progress?: number       // 0-100，压缩中时实时更新
+  phase?: CompressPhase   // 当前阶段
 }
 
 export interface CompressResult {

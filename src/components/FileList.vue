@@ -78,10 +78,22 @@
               <span v-else-if="file.status === 'error'" class="file-error" :title="file.errorMessage">
                 {{ file.errorMessage }}
               </span>
-              <span v-else-if="file.status === 'compressing'" class="file-status-text">
-                压缩中...
-              </span>
-              <span v-else class="file-status-text muted">等待压缩</span>
+              <template v-else-if="file.status === 'compressing'">
+                <div class="progress-bar">
+                  <div
+                    class="progress-fill"
+                    :style="{ width: (file.progress ?? 0) + '%' }"
+                    :class="file.phase"
+                  />
+                </div>
+                <span class="progress-label">
+                  {{ phaseLabel(file.phase) }}
+                  <span v-if="file.phase === 'downloading' && file.progress">
+                    {{ file.progress }}%
+                  </span>
+                </span>
+              </template>
+              <span v-else class="file-status-text muted">等待中</span>
             </div>
           </div>
 
@@ -91,12 +103,20 @@
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             </span>
-            <span v-else-if="file.status === 'error'" class="badge error">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
+            <!-- 失败时显示重试按钮替代错误图标 -->
+            <button
+              v-else-if="file.status === 'error'"
+              class="retry-btn"
+              @click="store.retryFile(file.id)"
+              title="重试"
+              :disabled="store.isCompressing"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="1 4 1 10 7 10" />
+                <path d="M3.51 15a9 9 0 1 0 .49-3" />
               </svg>
-            </span>
+              重试
+            </button>
           </div>
 
           <button
@@ -157,6 +177,15 @@ function formatSize(bytes: number): string {
 function calcRatio(original: number, compressed: number): number {
   if (original === 0) return 0
   return Math.round((1 - compressed / original) * 100)
+}
+
+function phaseLabel(phase?: string): string {
+  switch (phase) {
+    case 'uploading':   return '上传中...'
+    case 'processing':  return 'TinyPNG 处理中...'
+    case 'downloading': return '下载中'
+    default:            return '压缩中...'
+  }
 }
 
 async function handleCompress() {
@@ -401,6 +430,133 @@ async function handleCompress() {
   opacity: 0.6;
 }
 
+/* 进度条 */
+.progress-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+/* 上传阶段：蓝色条纹动画 */
+.progress-fill.uploading {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 60%, transparent) 50%,
+    var(--accent) 100%
+  );
+  background-size: 200% 100%;
+  animation: stripe-move 1.2s linear infinite;
+}
+
+/* 处理阶段：脉冲动画 */
+.progress-fill.processing {
+  background: var(--accent);
+  animation: pulse-width 1.5s ease-in-out infinite;
+}
+
+@keyframes stripe-move {
+  0%   { background-position: 200% 0; }
+  100% { background-position: 0% 0; }
+}
+
+@keyframes pulse-width {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.progress-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 4px;
+}
+
+/* ── 压缩进度条 ─────────────────────────────────────────────── */
+.progress-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 3px;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.progress-fill.uploading {
+  background: var(--warning);
+}
+
+.progress-fill.processing {
+  background: var(--accent);
+  /* 处理阶段进度不确定，用动画表示 */
+  animation: processing-pulse 1.2s ease-in-out infinite;
+  width: 100% !important;
+  opacity: 0.6;
+}
+
+.progress-fill.downloading {
+  background: var(--success);
+}
+
+@keyframes processing-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.progress-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 4px;
+}
+
+/* ── 重试按钮 ────────────────────────────────────────────────── */
+.retry-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.retry-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  border-color: var(--accent);
+}
+
+.retry-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.retry-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
 .file-badge {
   flex-shrink: 0;
 }
@@ -457,6 +613,38 @@ async function handleCompress() {
 .remove-btn svg {
   width: 14px;
   height: 14px;
+}
+
+/* 重试按钮 */
+.retry-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  color: var(--error);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.retry-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 20%, transparent);
+}
+
+.retry-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.retry-btn svg {
+  width: 12px;
+  height: 12px;
 }
 
 /* Animations */

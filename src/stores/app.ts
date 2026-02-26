@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, nextTick } from 'vue'
+import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type { AppSettings, FileItem, CompressResult } from '@/types'
 
@@ -82,16 +82,17 @@ export const useAppStore = defineStore('app', () => {
 
     isCompressing.value = true
 
-    // 标记所有待压缩文件，让 UI 立即更新
-    pending.forEach(f => { f.status = 'compressing' })
-    await nextTick()
-
-    // 并发队列：最多同时 3 个请求，受 TinyPNG 并发限制和带宽综合影响
+    // 并发队列：最多同时 3 个，剩余文件保持 pending 状态直到 worker 取到
     const CONCURRENCY = 3
     const queue = [...pending]
     const currentSettings = { ...settings.value }
 
     async function processOne(file: FileItem) {
+      // 只有 worker 实际取到该文件时才更新为压缩中
+      file.status = 'compressing'
+      file.progress = 0
+      file.phase = undefined
+      file.errorMessage = undefined
       try {
         const result = await invoke<CompressResult>('compress_image', {
           filePath: file.path,
@@ -101,9 +102,13 @@ export const useAppStore = defineStore('app', () => {
         file.compressedSize = result.output_size
         file.outputPath = result.output_path
         file.status = 'done'
+        file.progress = 100
+        file.phase = undefined
       } catch (e) {
         file.status = 'error'
         file.errorMessage = String(e)
+        file.progress = undefined
+        file.phase = undefined
       }
     }
 
@@ -114,7 +119,6 @@ export const useAppStore = defineStore('app', () => {
       }
     }
 
-    // 启动 N 个 worker，各自从队列取任务，自然形成并发控制
     await Promise.all(
       Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker)
     )
@@ -134,6 +138,17 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  async function retryFile(id: string) {
+    const file = files.value.find(f => f.id === id)
+    if (!file || file.status !== 'error') return
+    // 重置为待压缩，复用 compressAll 的并发逻辑
+    file.status = 'pending'
+    file.errorMessage = undefined
+    file.progress = undefined
+    file.phase = undefined
+    await compressAll()
+  }
+
   return {
     settings,
     files,
@@ -148,5 +163,6 @@ export const useAppStore = defineStore('app', () => {
     clearFiles,
     removeFile,
     compressAll,
+    retryFile,
   }
 })
