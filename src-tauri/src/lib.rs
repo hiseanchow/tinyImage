@@ -438,5 +438,35 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("构建 TinyImage 时出错")
-        .run(|_app, _event| {});
+        .run(|app, event| {
+            // RunEvent::Opened 仅在 macOS 存在，专用于"打开方式"和图标拖拽
+            // Windows 不编译此分支，避免 E0599 编译错误
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                let files: Vec<String> = urls
+                    .iter()
+                    .filter(|u| u.scheme() == "file")
+                    .filter_map(|u| u.to_file_path().ok())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect();
+                let valid = filter_image_args(files);
+                if !valid.is_empty() {
+                    if !FRONTEND_READY.load(Ordering::SeqCst) {
+                        if let Ok(mut guard) = STARTUP_FILES.lock() {
+                            for f in &valid {
+                                guard.push((f.clone(), false));
+                            }
+                        }
+                    } else {
+                        app.emit("add-files", &valid).ok();
+                    }
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+            let _ = (app, event);
+        });
 }
