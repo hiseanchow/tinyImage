@@ -29,7 +29,13 @@ static BG_RESULTS: Mutex<(u32, u32)> = Mutex::new((0, 0)); // (success, error)
 fn spawn_bg_compress(app: AppHandle, files: Vec<String>) {
     let settings = settings::load();
     for file in files {
-        BG_PENDING.fetch_add(1, Ordering::SeqCst);
+        let prev = BG_PENDING.fetch_add(1, Ordering::SeqCst);
+        // 新的一批次开始（从 0 变为 1），重置累计结果，避免跨批次数字累加
+        if prev == 0 {
+            if let Ok(mut g) = BG_RESULTS.lock() {
+                *g = (0, 0);
+            }
+        }
         let handle = app.clone();
         let f = file.clone();
         let s = settings.clone();
