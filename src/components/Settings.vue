@@ -285,19 +285,23 @@ async function handleSave() {
 
   saving.value = true
   try {
+    const contextMenuChanged = local.contextMenuEnabled !== store.settings.contextMenuEnabled
+
     Object.assign(store.settings, local)
     setTheme(local.theme)
     await store.saveSettings()
 
-    // 同步右键菜单注册状态
-    try {
-      if (local.contextMenuEnabled) {
-        await invoke('register_context_menu')
-      } else {
-        await invoke('unregister_context_menu')
+    // 仅在右键菜单开关状态发生变化时才注册/注销（Windows 注销需重启资源管理器）
+    if (contextMenuChanged) {
+      try {
+        if (local.contextMenuEnabled) {
+          await invoke('register_context_menu')
+        } else {
+          await invoke('unregister_context_menu')
+        }
+      } catch (e) {
+        console.warn('右键菜单注册失败:', e)
       }
-    } catch (e) {
-      console.warn('右键菜单注册失败:', e)
     }
 
     emit('close')
