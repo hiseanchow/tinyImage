@@ -2,8 +2,24 @@ use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::settings::{AppSettings, OutputMode};
+
+// 全局共享 Client：避免每次压缩都重建 TLS 上下文和连接池
+// 在 Windows 上 TLS 初始化开销尤为明显，共享后可复用 keep-alive 连接
+static HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+
+fn client() -> &'static reqwest::blocking::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(120))
+            .pool_max_idle_per_host(4)
+            .build()
+            .expect("构建 HTTP Client 失败")
+    })
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompressResult {
@@ -50,8 +66,7 @@ pub fn compress_image(file_path: &str, settings: &AppSettings) -> Result<Compres
     let input_size = input_data.len() as u64;
 
     // 上传到 TinyPNG API
-    let client = reqwest::blocking::Client::new();
-    let upload_resp = client
+    let upload_resp = client()
         .post("https://api.tinify.com/shrink")
         .basic_auth("api", Some(&settings.api_key))
         .header("Content-Type", "application/octet-stream")
@@ -69,14 +84,27 @@ pub fn compress_image(file_path: &str, settings: &AppSettings) -> Result<Compres
 
     let tinify_resp: TinyPngResponse = upload_resp.json()?;
 
-    // 下载压缩后的文件
-    let compressed_data = client
+    // 下载压缩后的文件，并检查 HTTP 状态
+    let download_resp = client()
         .get(&tinify_resp.output.url)
         .basic_auth("api", Some(&settings.api_key))
-        .send()?
-        .bytes()?;
+        .send()?;
 
-    let output_size = tinify_resp.output.size;
+    if !download_resp.status().is_success() {
+        bail!("下载压缩文件失败: HTTP {}", download_resp.status());
+    }
+
+    let compressed_data = download_resp.bytes()?;
+
+    // 验证数据合理性：防止写入空文件或错误响应体（通常只有几十字节）
+    if compressed_data.len() < 64 {
+        bail!(
+            "下载的压缩文件异常（{}字节），请重试",
+            compressed_data.len()
+        );
+    }
+
+    let output_size = compressed_data.len() as u64;
 
     // 确定输出路径
     let output_path = resolve_output_path(path, settings)?;
@@ -86,7 +114,15 @@ pub fn compress_image(file_path: &str, settings: &AppSettings) -> Result<Compres
         fs::create_dir_all(parent)?;
     }
 
-    fs::write(&output_path, &compressed_data)?;
+    // 先写临时文件，成功后再原子替换，避免 overwrite 模式下中途失败损坏原图
+    let tmp_path = output_path.with_extension("__tinytmp__");
+    fs::write(&tmp_path, &compressed_data).map_err(|e| {
+        anyhow!("写入临时文件失败: {}", e)
+    })?;
+    fs::rename(&tmp_path, &output_path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        anyhow!("移动文件失败: {}", e)
+    })?;
 
     Ok(CompressResult {
         input_size,

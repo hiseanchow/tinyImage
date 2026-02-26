@@ -2,6 +2,7 @@ mod compress;
 mod context_menu;
 mod settings;
 
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_notification::NotificationExt;
@@ -11,11 +12,76 @@ extern "C" {
     fn registerTinyImageService();
 }
 
-// ── 启动文件队列（Open With 传入的文件） ─────────────────────────
+// ── 启动文件队列 ───────────────────────────────────────────────
 use std::sync::Mutex;
 static STARTUP_FILES: Mutex<Vec<(String, bool)>> = Mutex::new(vec![]);
 static FRONTEND_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static IS_BACKGROUND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// ── 后台压缩计数器 ────────────────────────────────────────────
+// 用于多文件后台压缩：等所有任务结束后再通知并退出
+static BG_PENDING: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static BG_RESULTS: Mutex<(u32, u32)> = Mutex::new((0, 0)); // (success, error)
+
+// ── 后台压缩辅助函数 ──────────────────────────────────────────
+// 为每个文件启动一个 spawn_blocking 任务；全部完成后发通知，
+// 若是纯后台模式（IS_BACKGROUND）则退出 app。
+fn spawn_bg_compress(app: AppHandle, files: Vec<String>) {
+    let settings = settings::load();
+    for file in files {
+        BG_PENDING.fetch_add(1, Ordering::SeqCst);
+        let handle = app.clone();
+        let f = file.clone();
+        let s = settings.clone();
+        tauri::async_runtime::spawn(async move {
+            let res = tokio::task::spawn_blocking(move || {
+                compress::compress_image(&f, &s)
+            })
+            .await
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("panic")));
+
+            {
+                let mut g = BG_RESULTS.lock().unwrap_or_else(|e| e.into_inner());
+                if res.is_ok() {
+                    g.0 += 1;
+                } else {
+                    g.1 += 1;
+                }
+            }
+
+            let rem = BG_PENDING.fetch_sub(1, Ordering::SeqCst) - 1;
+            if rem == 0 {
+                // 等待 500ms，让 MultiSelectModel=Player 的后续调用通过单实例路由过来
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                if BG_PENDING.load(Ordering::SeqCst) > 0 {
+                    return; // 有新任务加入，不退出
+                }
+
+                let (ok, err) = *BG_RESULTS.lock().unwrap_or_else(|e| e.into_inner());
+                // 后台模式强制使用系统通知（窗口隐藏，dialog 无法显示）
+                let message = if err == 0 {
+                    format!("成功压缩 {} 张图片", ok)
+                } else {
+                    format!("压缩完成：{} 成功，{} 失败", ok, err)
+                };
+                handle
+                    .notification()
+                    .builder()
+                    .title("TinyImage")
+                    .body(&message)
+                    .show()
+                    .ok();
+
+                if IS_BACKGROUND.load(Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                    handle.exit(0);
+                }
+            }
+        });
+    }
+}
+
+// ── 普通命令 ──────────────────────────────────────────────────
 
 #[tauri::command]
 fn init_window(window: tauri::Window) {
@@ -28,11 +94,11 @@ fn init_window(window: tauri::Window) {
 
 #[tauri::command]
 fn get_startup_files() -> Vec<(String, bool)> {
-    FRONTEND_READY.store(true, std::sync::atomic::Ordering::SeqCst);
+    FRONTEND_READY.store(true, Ordering::SeqCst);
     STARTUP_FILES.lock().map(|mut v| v.drain(..).collect()).unwrap_or_default()
 }
 
-// ── 设置命令 ─────────────────────────────────────────────────
+// ── 设置命令 ──────────────────────────────────────────────────
 
 #[tauri::command]
 fn load_settings() -> settings::AppSettings {
@@ -107,14 +173,13 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-// ── 压缩命令 ─────────────────────────────────────────────────
+// ── 压缩命令 ──────────────────────────────────────────────────
 
 #[tauri::command]
 async fn compress_image(
     file_path: String,
     settings: settings::AppSettings,
 ) -> Result<compress::CompressResult, String> {
-    // 使用 spawn_blocking 防止阻塞 async 运行时，保证 UI 响应式更新能实时推送
     tokio::task::spawn_blocking(move || {
         compress::compress_image(&file_path, &settings)
     })
@@ -123,7 +188,7 @@ async fn compress_image(
     .map_err(|e| e.to_string())
 }
 
-// ── 通知命令 ─────────────────────────────────────────────────
+// ── 通知命令 ──────────────────────────────────────────────────
 
 #[tauri::command]
 fn notify_result(
@@ -152,7 +217,6 @@ fn notify_result(
         NotifyMode::Silent => {}
 
         NotifyMode::Dialog => {
-            // 通过事件发给前端显示 dialog
             app.emit("show-result-dialog", &message)
                 .map_err(|e| e.to_string())?;
         }
@@ -170,7 +234,7 @@ fn notify_result(
     Ok(())
 }
 
-// ── 右键菜单命令 ─────────────────────────────────────────────
+// ── 右键菜单命令 ──────────────────────────────────────────────
 
 #[tauri::command]
 fn register_context_menu() -> Result<(), String> {
@@ -182,7 +246,7 @@ fn unregister_context_menu() -> Result<(), String> {
     context_menu::unregister().map_err(|e| e.to_string())
 }
 
-// ── Tauri 入口 ────────────────────────────────────────────────
+// ── 工具函数 ──────────────────────────────────────────────────
 
 fn filter_image_args(args: Vec<String>) -> Vec<String> {
     let image_exts = ["png", "jpg", "jpeg", "webp"];
@@ -194,14 +258,59 @@ fn filter_image_args(args: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// 解析命令行参数，返回 (is_compress_mode, file_paths)
+fn parse_args(raw: Vec<String>) -> (bool, Vec<String>) {
+    let is_compress = raw.iter().any(|a| a == "--compress");
+    let files = filter_image_args(
+        raw.into_iter().filter(|a| a != "--compress").collect(),
+    );
+    (is_compress, files)
+}
+
+// ── Tauri 入口 ────────────────────────────────────────────────
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例插件必须第一个注册
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // argv 是第二个实例的完整 std::env::args()，skip(1) 去掉程序路径
+            let (is_compress, files) = parse_args(argv.into_iter().skip(1).collect());
+
+            if is_compress && !files.is_empty() {
+                // 右键"用TinyImage压缩"：在当前进程后台压缩，不影响 UI
+                spawn_bg_compress(app.clone(), files);
+            } else if !files.is_empty() {
+                // 打开方式：仅添加文件到列表，不自动压缩
+                if FRONTEND_READY.load(Ordering::SeqCst) {
+                    app.emit("add-files", &files).ok();
+                } else {
+                    if let Ok(mut guard) = STARTUP_FILES.lock() {
+                        for f in &files {
+                            guard.push((f.clone(), false));
+                        }
+                    }
+                }
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            } else {
+                // 无文件参数（直接启动第二个实例），只把已有窗口带到前台
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+        }))
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_os::init())
         .setup(|app| {
             // 注册原生 NSServices 处理器（macOS）
             #[cfg(target_os = "macos")]
@@ -213,26 +322,36 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             context_menu::cleanup_legacy_workflows();
 
-            // 收集通过命令行参数（如 Windows）传入的文件
-            let startup = filter_image_args(
-                std::env::args().skip(1).collect::<Vec<_>>(),
-            );
-            if !startup.is_empty() {
+            // ── 解析启动参数 ──────────────────────────────────
+            // skip(1) 去掉 argv[0]（程序路径），再 skip(1) 去掉 Tauri 内部注入的 URL scheme 参数
+            let raw: Vec<String> = std::env::args().skip(1).collect();
+            let (is_compress, file_args) = parse_args(raw);
+
+            if is_compress {
+                // 右键"用TinyImage压缩"首次启动：纯后台模式，压缩完退出
+                IS_BACKGROUND.store(true, Ordering::SeqCst);
+                if !file_args.is_empty() {
+                    spawn_bg_compress(app.handle().clone(), file_args);
+                } else {
+                    // --compress 但没有文件，直接退出
+                    app.handle().exit(0);
+                }
+            } else if !file_args.is_empty() {
+                // 通过"打开方式"启动：显示窗口，仅添加文件，不自动压缩
                 if let Ok(mut guard) = STARTUP_FILES.lock() {
-                    for f in startup {
-                        guard.push((f, true));
+                    for f in file_args {
+                        guard.push((f, false));
                     }
                 }
             }
 
-            // 注册 tinyimage:// URL scheme 处理器
-            // app 未运行时 macOS 会先启动再发送 URL；已运行时直接发给现有实例
+            // ── macOS deep-link 处理 ──────────────────────────
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 for url in event.urls() {
                     let u = url.as_str();
                     let is_bg = u.contains("background=1");
-                    
+
                     let mut was_hidden = true;
                     if let Some(window) = handle.get_webview_window("main") {
                         if let Ok(v) = window.is_visible() {
@@ -246,32 +365,13 @@ pub fn run() {
                     }
 
                     if is_bg && was_hidden {
-                        // 纯后台模式：不显示 UI，压缩完直接退出
-                        IS_BACKGROUND.store(true, std::sync::atomic::Ordering::SeqCst);
-                        let app_handle = handle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let settings = settings::load();
-                            let mut success = 0;
-                            let mut error = 0;
-                            for file in files {
-                                let f = file.clone();
-                                let s = settings.clone();
-                                let res = tokio::task::spawn_blocking(move || {
-                                    compress::compress_image(&f, &s)
-                                }).await.unwrap_or_else(|_| Err(anyhow::anyhow!("Panic")));
-                                
-                                if res.is_ok() { success += 1; } else { error += 1; }
-                            }
-                            let _ = notify_result(app_handle.clone(), settings, success, error);
-                            // 留一点时间给通知发出
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                            app_handle.exit(0);
-                        });
+                        IS_BACKGROUND.store(true, Ordering::SeqCst);
+                        spawn_bg_compress(handle.clone(), files);
                         continue;
                     }
 
                     // 前台模式：显示 UI，把文件发给前端
-                    if !FRONTEND_READY.load(std::sync::atomic::Ordering::SeqCst) {
+                    if !FRONTEND_READY.load(Ordering::SeqCst) {
                         if let Ok(mut guard) = STARTUP_FILES.lock() {
                             for f in &files {
                                 guard.push((f.clone(), true));
@@ -302,8 +402,5 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("构建 TinyImage 时出错")
-        .run(|_app, _event| {
-            // Tauri 2 已移除 RunEvent::Opened，macOS Open With 功能
-            // 现在通过 deep-link 插件的 on_open_url 处理
-        });
+        .run(|_app, _event| {});
 }

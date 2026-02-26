@@ -82,13 +82,20 @@ export const useAppStore = defineStore('app', () => {
 
     isCompressing.value = true
 
-    for (const file of pending) {
-      file.status = 'compressing'
-      await nextTick() // 等 DOM 刷新"压缩中"状态后再发起 IPC
+    // 标记所有待压缩文件，让 UI 立即更新
+    pending.forEach(f => { f.status = 'compressing' })
+    await nextTick()
+
+    // 并发队列：最多同时 3 个请求，受 TinyPNG 并发限制和带宽综合影响
+    const CONCURRENCY = 3
+    const queue = [...pending]
+    const currentSettings = { ...settings.value }
+
+    async function processOne(file: FileItem) {
       try {
         const result = await invoke<CompressResult>('compress_image', {
           filePath: file.path,
-          settings: settings.value,
+          settings: currentSettings,
         })
         file.originalSize = result.input_size
         file.compressedSize = result.output_size
@@ -99,6 +106,18 @@ export const useAppStore = defineStore('app', () => {
         file.errorMessage = String(e)
       }
     }
+
+    async function worker() {
+      while (queue.length > 0) {
+        const file = queue.shift()!
+        await processOne(file)
+      }
+    }
+
+    // 启动 N 个 worker，各自从队列取任务，自然形成并发控制
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, pending.length) }, worker)
+    )
 
     isCompressing.value = false
 
