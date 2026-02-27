@@ -29,6 +29,26 @@ static BG_RESULTS: Mutex<(u32, u32)> = Mutex::new((0, 0)); // (success, error)
 // 若是纯后台模式（IS_BACKGROUND）则退出 app。
 fn spawn_bg_compress(app: AppHandle, files: Vec<String>) {
     let settings = settings::load();
+
+    // API Key 未配置时直接提示，不进入压缩流程
+    if settings.api_key.is_empty() {
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            handle
+                .notification()
+                .builder()
+                .title("TinyImage")
+                .body("请先在 TinyImage 设置中配置 TinyPNG API Key")
+                .show()
+                .ok();
+            if IS_BACKGROUND.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                handle.exit(0);
+            }
+        });
+        return;
+    }
+
     for file in files {
         let prev = BG_PENDING.fetch_add(1, Ordering::SeqCst);
         // 新的一批次开始（从 0 变为 1），重置累计结果，避免跨批次数字累加

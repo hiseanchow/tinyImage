@@ -9,7 +9,7 @@ export const useAppStore = defineStore('app', () => {
     notifyMode: 'notification',
     outputMode: 'alongside',
     outputDirectory: '',
-    contextMenuEnabled: false,
+    contextMenuEnabled: true,
     theme: 'auto',
   })
 
