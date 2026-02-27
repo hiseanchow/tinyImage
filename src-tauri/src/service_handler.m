@@ -51,19 +51,27 @@ static BOOL isContextMenuEnabled(void) {
   if (paths.count == 0)
     return;
 
-  // 用 NSTask 直接执行可执行文件（绕过 Launch Services），保证无论 app
-  // 是否已在运行都能创建新进程并传递 --compress 参数：
-  // - app 未运行：新进程成为首个实例，直接进入后台压缩模式后退出
-  // - app 已运行：单实例插件将参数转发给已有进程后新进程退出
-  NSString *exePath = [[NSBundle mainBundle] executablePath];
-  NSMutableArray<NSString *> *args =
-      [NSMutableArray arrayWithObject:@"--compress"];
-  [args addObjectsFromArray:paths];
+  // 通过 openURL 将压缩请求路由给 TinyImage：
+  // - app 已运行：macOS 将 URL 投递给正在运行的进程，deep-link 处理器接收后在后台压缩
+  // - app 未运行：macOS 启动 app（需 adhoc 签名使 URL scheme 在 Launch Services 中正确注册），
+  //   app 启动后 deep-link 处理器接收 URL，以后台模式压缩完成后自动退出
+  NSMutableCharacterSet *allowed =
+      [[NSCharacterSet URLQueryAllowedCharacterSet] mutableCopy];
+  [allowed removeCharactersInString:@"&=?#+%"];
 
-  NSTask *task = [[NSTask alloc] init];
-  task.executableURL = [NSURL fileURLWithPath:exePath];
-  task.arguments = args;
-  [task launchAndReturnError:nil];
+  NSMutableString *urlStr = [@"tinyimage://compress?background=1" mutableCopy];
+  for (NSString *path in paths) {
+    NSString *encoded =
+        [path stringByAddingPercentEncodingWithAllowedCharacters:allowed];
+    if (!encoded)
+      continue;
+    [urlStr appendFormat:@"&file=%@", encoded];
+  }
+
+  NSURL *url = [NSURL URLWithString:urlStr];
+  if (url) {
+    [[NSWorkspace sharedWorkspace] openURL:url];
+  }
 }
 
 @end
@@ -76,5 +84,12 @@ void registerTinyImageService(void) {
     gServiceHandler = [[TinyImageServiceHandler alloc] init];
     [NSApp setServicesProvider:gServiceHandler];
     NSUpdateDynamicServices();
+  });
+}
+
+// 切换为后台 app（隐藏 Dock 图标），供后台压缩模式调用
+void setActivationPolicyAccessory(void) {
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
   });
 }

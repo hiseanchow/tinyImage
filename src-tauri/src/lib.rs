@@ -10,6 +10,7 @@ use tauri_plugin_notification::NotificationExt;
 #[cfg(target_os = "macos")]
 extern "C" {
     fn registerTinyImageService();
+    fn setActivationPolicyAccessory();
 }
 
 // ── 启动文件队列 ───────────────────────────────────────────────
@@ -296,6 +297,8 @@ pub fn run() {
                         .unwrap_or(false);
                 if was_launched_silently {
                     IS_BACKGROUND.store(true, Ordering::SeqCst);
+                    #[cfg(target_os = "macos")]
+                    unsafe { setActivationPolicyAccessory() };
                 }
                 spawn_bg_compress(app.clone(), files);
             } else if !files.is_empty() {
@@ -348,6 +351,8 @@ pub fn run() {
             if is_compress {
                 // 右键"用TinyImage压缩"首次启动：纯后台模式，压缩完退出
                 IS_BACKGROUND.store(true, Ordering::SeqCst);
+                #[cfg(target_os = "macos")]
+                unsafe { setActivationPolicyAccessory() };
                 if !file_args.is_empty() {
                     spawn_bg_compress(app.handle().clone(), file_args);
                 } else {
@@ -412,9 +417,11 @@ pub fn run() {
 
                     if is_bg {
                         // 服务菜单请求：始终后台压缩，不弹出窗口。
-                        // 若 app 是因本次请求才启动的（窗口从未显示），则压缩后退出。
+                        // 若 app 是因本次请求才启动的（窗口从未显示），则压缩后退出并隐藏 Dock 图标。
                         if was_hidden {
                             IS_BACKGROUND.store(true, Ordering::SeqCst);
+                            #[cfg(target_os = "macos")]
+                            unsafe { setActivationPolicyAccessory() };
                         }
                         spawn_bg_compress(handle.clone(), files);
                         continue;
