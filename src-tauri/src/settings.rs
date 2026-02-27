@@ -50,7 +50,9 @@ impl Default for AppSettings {
             notify_mode: NotifyMode::Notification,
             output_mode: OutputMode::Alongside,
             output_directory: String::new(),
-            context_menu_enabled: false,
+            // macOS：NSServices 通过 Info.plist 始终注册，默认与实际状态保持一致
+            // Windows：需要手动写注册表才能启用，默认关闭
+            context_menu_enabled: cfg!(target_os = "macos"),
             theme: Theme::Auto,
         }
     }
